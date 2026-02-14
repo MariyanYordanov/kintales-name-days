@@ -1,50 +1,78 @@
-import { transliterate } from "./transliterate.js";
+/** @typedef {import('./types.js').SearchResult} SearchResult */
 
-const CYR_REGEX = /[\u0400-\u04FF]/;
+import { getIndex } from './data/nameDays.js';
+import { normalize } from './normalize.js';
 
 /**
- * Normalizes a string for comparison: lowercase and trimmed.
+ * Search names by prefix. Searches primary names, variants, and Latin transliterations.
+ * Case-insensitive. Returns unique SearchResult objects.
+ *
+ * @param {string} prefix - Prefix to search for (Cyrillic or Latin)
+ * @param {number} [year] - Year for moveable dates (default: current year)
+ * @returns {SearchResult[]}
  */
-export function normalize(str) {
-  return str.toLowerCase().trim();
+export function searchNames(prefix, year) {
+  if (!prefix || typeof prefix !== 'string') return [];
+
+  const key = normalize(prefix);
+  if (key.length === 0) return [];
+
+  const y = year ?? new Date().getFullYear();
+  const idx = getIndex(y);
+
+  /** @type {Map<string, SearchResult>} */
+  const resultMap = new Map();
+
+  for (const [nameKey, entries] of idx.byName) {
+    if (!nameKey.startsWith(key)) continue;
+
+    for (const entry of entries) {
+      const dateStr = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
+      const resultKey = `${entry.name}|${dateStr}`;
+
+      if (!resultMap.has(resultKey)) {
+        resultMap.set(resultKey, {
+          name: entry.name,
+          date: dateStr,
+          holiday: entry.holiday,
+        });
+      }
+    }
+  }
+
+  return [...resultMap.values()];
 }
 
 /**
- * Checks if a name matches a query (prefix or exact match).
- * Supports both Cyrillic and Latin input.
- * @param {string} name - The name to check (Cyrillic).
- * @param {string} query - The search query.
- * @returns {boolean}
+ * Get all names celebrating a specific holiday.
+ * Case-insensitive partial match.
+ *
+ * @param {string} holidayName - Holiday name to search for (Cyrillic or Latin)
+ * @param {number} [year] - Year for moveable dates (default: current year)
+ * @returns {string[]} Array of all celebrating names (primary + variants)
  */
-export function nameMatches(name, query) {
-  const normalizedName = normalize(name);
-  const normalizedQuery = normalize(query);
+export function getNamesByHoliday(holidayName, year) {
+  if (!holidayName || typeof holidayName !== 'string') return [];
 
-  // Direct match
-  if (normalizedName.startsWith(normalizedQuery)) return true;
+  const key = normalize(holidayName);
+  if (key.length === 0) return [];
 
-  // If query is Latin, transliterate and match against Cyrillic
-  if (!CYR_REGEX.test(query)) {
-    const cyrQuery = normalize(transliterate(query));
-    if (normalizedName.startsWith(cyrQuery)) return true;
+  const y = year ?? new Date().getFullYear();
+  const idx = getIndex(y);
+
+  const names = [];
+
+  for (const [holidayKey, entries] of idx.byHoliday) {
+    if (!holidayKey.includes(key)) continue;
+
+    for (const entry of entries) {
+      names.push(entry.name);
+      for (const variant of entry.variants) {
+        names.push(variant);
+      }
+    }
   }
 
-  // If query is Cyrillic, transliterate name to Latin and match
-  if (CYR_REGEX.test(query)) {
-    const latName = normalize(transliterate(name));
-    if (latName.startsWith(normalizedQuery)) return true;
-  }
-
-  return false;
-}
-
-/**
- * Formats a date string from a Date object to "MM-DD".
- * @param {Date} date
- * @returns {string}
- */
-export function formatDate(date) {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${month}-${day}`;
+  // Deduplicate while preserving order
+  return [...new Set(names)];
 }
